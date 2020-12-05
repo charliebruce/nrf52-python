@@ -1,0 +1,320 @@
+
+
+# Allow control of an nRF52832 by directly messing with registers
+# This allows a SWD debugger to quickly prove board functionality
+# This is just a small subset of the complete functionality
+# It is designed to allow basic self-test and bringup functions only
+# Should be applicable to others in the family, but may need to fix, for example, GPIO port 1
+from time import sleep
+import os
+
+#
+# GPIO
+#
+NRF52_GPIO_BASE = 0x50000000
+
+NRF52_GPIO_REG_OUT      = NRF52_GPIO_BASE + 0x504
+NRF52_GPIO_REG_OUTSET   = NRF52_GPIO_BASE + 0x508
+NRF52_GPIO_REG_OUTCLR   = NRF52_GPIO_BASE + 0x50C
+NRF52_GPIO_REG_IN       = NRF52_GPIO_BASE + 0x510
+NRF52_GPIO_REG_DIR      = NRF52_GPIO_BASE + 0x514
+NRF52_GPIO_REG_DIRSET   = NRF52_GPIO_BASE + 0x518
+NRF52_GPIO_REG_DIRCLR   = NRF52_GPIO_BASE + 0x51C
+def NRF52_GPIO_REG_PIN_CNF(pin):
+
+    assert isinstance(pin, int), "Invalid type for pin - need int"
+    assert pin < 32, "Need fixes before this code can handle GPIO P1"
+    assert pin >= 0, "Invalid pin"
+
+    return NRF52_GPIO_BASE + 0x700 + (0x04 * pin)
+
+GPIO_DIR_INPUT = 0
+GPIO_DIR_OUTPUT = 1
+
+GPIO_BUFFER_CONNECT = 0
+GPIO_BUFFER_DISCONNECT = 1
+
+GPIO_PULL_NONE = 0
+GPIO_PULL_DOWN = 1
+GPIO_PULL_UP = 3
+
+GPIO_DRIVE_S0S1 = 0
+GPIO_DRIVE_H0S1 = 1
+GPIO_DRIVE_S0H1 = 2
+GPIO_DRIVE_H0H1 = 3
+GPIO_DRIVE_D0S1 = 4
+GPIO_DRIVE_D0H1 = 5
+GPIO_DRIVE_S0D1 = 6
+GPIO_DRIVE_H0D1 = 7
+
+#
+# Clock
+#
+NRF52_CLOCK_BASE = 0x40000000
+
+NRF52_CLOCK_REG_HFCLKSTAT = NRF52_CLOCK_BASE + 0x40C
+
+
+
+#
+# SPI Master
+# 
+NRF52_SPIM0_BASE = 0x40003000
+NRF52_SPIM1_BASE = 0x40004000
+NRF52_SPIM2_BASE = 0x40023000
+
+NRF52_SPIM_OFFSET_TASKS_START       = 0x010
+NRF52_SPIM_OFFSET_TASKS_STOP        = 0x014
+NRF52_SPIM_OFFSET_TASKS_SUSPEND     = 0x01C
+NRF52_SPIM_OFFSET_TASKS_RESUME      = 0x020
+NRF52_SPIM_OFFSET_EVENTS_STOPPED    = 0x104
+NRF52_SPIM_OFFSET_EVENTS_ENDRX      = 0x110
+NRF52_SPIM_OFFSET_EVENTS_END        = 0x118
+NRF52_SPIM_OFFSET_EVENTS_ENDTX      = 0x120
+NRF52_SPIM_OFFSET_EVENTS_STARTED    = 0x14C
+NRF52_SPIM_OFFSET_ENABLE            = 0x500
+NRF52_SPIM_OFFSET_SCK               = 0x508
+NRF52_SPIM_OFFSET_MOSI              = 0x50C
+NRF52_SPIM_OFFSET_MISO              = 0x510
+NRF52_SPIM_OFFSET_FREQUENCY         = 0x524
+NRF52_SPIM_OFFSET_RXD_PTR           = 0x534
+NRF52_SPIM_OFFSET_RXD_MAXCNT        = 0x538
+NRF52_SPIM_OFFSET_RXD_AMOUNT        = 0x53C
+NRF52_SPIM_OFFSET_RXD_LIST          = 0x540
+NRF52_SPIM_OFFSET_TXD_PTR           = 0x544
+NRF52_SPIM_OFFSET_TXD_MAXCNT        = 0x548
+NRF52_SPIM_OFFSET_TXD_AMOUNT        = 0x54C
+NRF52_SPIM_OFFSET_TXD_LIST          = 0x550
+NRF52_SPIM_OFFSET_CONFIG            = 0x554
+
+NRF52_SPIM_FREQUENCY_8M = 0x80000000
+NRF52_SPIM_FREQUENCY_4M = 0x40000000
+NRF52_SPIM_FREQUENCY_2M = 0x20000000
+NRF52_SPIM_FREQUENCY_1M = 0x10000000
+NRF52_SPIM_FREQUENCY_500K = 0x08000000
+NRF52_SPIM_FREQUENCY_250K = 0x04000000
+NRF52_SPIM_FREQUENCY_125K = 0x02000000
+
+# 
+# RAM
+# 
+NRF52_DATA_RAM_BASE = 0x20000000
+NRF52_DATA_RAM_LEN = 0x00010000 # This is 64kB - xxAA only.
+
+class nrf52:
+
+    def __init__(self, jlink):
+
+        self.jlink = jlink 
+
+    # Specify full configuration of GPIO pin. Defaults match reset state.
+    def gpio_cfg_full(self, pin, dir=GPIO_DIR_INPUT, input_buffer=GPIO_BUFFER_DISCONNECT, pull=GPIO_PULL_NONE, drive=GPIO_DRIVE_S0S1, sense=0):
+
+        cnf = (dir) + (input_buffer << 1) + (pull << 2) + (drive << 8) + (sense << 16)
+
+        self.jlink.memory_write32(NRF52_GPIO_REG_PIN_CNF(pin), [cnf])
+
+    # # Just set the given pin as an output or input. Does NOT connect the input buffer
+    # def gpio_cfg_dir(self, pin, output):
+
+    #     assert isinstance(pin, int), "Invalid type for pin - need int"
+    #     assert pin < 32, "Need fixes before this code can handle GPIO P1"
+    #     assert pin >= 0, "Invalid pin"
+
+    #     # Set or clear the relevant bit
+    #     if output:
+    #         reg = NRF52_GPIO_REG_DIRSET
+    #     else:
+    #         reg = NRF52_GPIO_REG_DIRCLR
+
+    #     # Write back to nRF52
+    #     self.jlink.memory_write32(reg, [(1 << pin)])
+
+    def gpio_write(self, pin, state):
+
+        assert isinstance(pin, int), "Invalid type for pin - need int"
+        assert pin < 32, "Need fixes before this code can handle GPIO P1"
+        assert pin >= 0, "Invalid pin"
+
+        if state:
+            reg = NRF52_GPIO_REG_OUTSET
+        else:
+            reg = NRF52_GPIO_REG_OUTCLR
+
+        self.jlink.memory_write32(reg, [(1 << pin)])
+
+
+    def _gpios_read(self):
+
+        return self.jlink.memory_read32(NRF52_GPIO_REG_IN, 1)[0]
+
+    def gpio_read(self, pin, pullup_config="none"):
+
+        assert isinstance(pin, int), "Invalid type for pin - need int"
+        assert pin < 32, "Need fixes before this code can handle GPIO P1"
+        assert pin >= 0, "Invalid pin"
+
+        # Pin must have the input buffer connected in order to read the pin
+        # Defaults to disconnected
+        pin_cnf = NRF52_GPIO_REG_PIN_CNF(pin)
+        if pullup_config == "none":
+            value = 0
+        elif pullup_config == "up":
+            value = (1 << 8)
+        elif pullup_config == "down":
+            value = (3 << 8)
+        else:
+            raise ValueError("pullup_config must be one of none, down, or up")
+
+        self.jlink.memory_write32(pin_cnf, [value])
+        
+        return (self._gpios_read() & (1 << pin)) != 0
+
+
+    def hfclk_status(self):
+
+        hfclkstat = self.jlink.memory_read32(NRF52_CLOCK_REG_HFCLKSTAT, 1)[0]
+        src = "XTAL" if (hfclkstat & 1) != 0 else "RC"
+        running = (hfclkstat & (1 << 16) != 0)
+        print(f"HFCLK running: {running}, type: {src}")
+
+
+
+
+    def spim_init(self, clk, mosi, miso, rate=NRF52_SPIM_FREQUENCY_4M, spim=0, cpol=0, cpha=0):
+
+        if spim != 0:
+            raise ValueError("Only tested with SPIM0")
+        if cpol != 0 or cpha != 0:
+            raise ValueError("Only tested with CPOL=CPHA=0")
+
+        if clk:
+            assert isinstance(clk, int) and (clk <= 31) and (clk >= 0), "Bad CLK pin (NC/Port 1 not allowed at the moment)"
+        else:
+            clk = 0xFFFFFFFF # Disconnected if high bit set
+
+        if mosi:
+            assert isinstance(mosi, int) and (mosi <= 31) and (mosi >= 0), "Bad MOSI pin (NC/Port 1 not allowed at the moment)"
+        else:
+            mosi = 0xFFFFFFFF # Disconnected if high bit set
+
+        if miso:
+            assert isinstance(miso, int) and (miso <= 31) and (miso >= 0), "Bad MISO pin (NC/Port 1 not allowed at the moment)"
+        else:
+            miso = 0xFFFFFFFF # Disconnected if high bit set
+
+        base = NRF52_SPIM0_BASE
+
+        # Before configuring the SPI peripheral, we have to drive the GPIO direction and values as specified in order to guarantee correct behaviour
+
+        # CLK is an output, must have its output value set to match CPOL
+        # According to nrfx_spim.c we also need the input buffer connected for correct functionality, but this doesn't seem to change anything (at least, not in TX-only mode?)
+        self.gpio_write(clk, (False if cpol == 0 else True))
+        self.gpio_cfg_full(clk, dir=GPIO_DIR_OUTPUT, input_buffer=GPIO_BUFFER_CONNECT, drive=GPIO_DRIVE_H0H1)
+
+        # MOSI is an output, must default to 0
+        self.gpio_write(mosi, False)
+        self.gpio_cfg_full(mosi, dir=GPIO_DIR_OUTPUT, drive=GPIO_DRIVE_H0H1)
+
+        # MISO is an input (TODO: do we need the buffer to be connected or not?)
+        self.gpio_cfg_full(miso, dir=GPIO_DIR_INPUT, input_buffer=GPIO_BUFFER_DISCONNECT)
+
+        # Set up the pins.
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_SCK, [clk])
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_MOSI, [mosi])
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_MISO, [miso])
+
+        # Configure the peripheral
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_FREQUENCY, [rate])
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_CONFIG, [0x00000000]) # Bit 0: MSB first (0), Bit 1: CPHA Leading (0), Bit 2: CPOL Active High (0)
+
+        # Enable it
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_ENABLE, [0x00000007]) # Enable SPIM 
+
+
+    def spim_send(self, cs, data_out, spim=0, discard_incoming=False):
+
+        assert spim==0, "Bad SPIM"
+        assert len(data_out) < 255, "Bad length"
+
+        # Check that the data length and specified CS pin are OK
+        assert isinstance(cs, int) and (cs <= 31) and (cs >= 0), "Bad CS pin (NC/Port 1 not allowed at the moment)"
+
+        base = NRF52_SPIM0_BASE
+
+        # Copy the outgoing data over into suitable RAM block
+        self.jlink.memory_write8(NRF52_DATA_RAM_BASE, data_out)
+
+        # Set up the RX and TX pointers/lengths
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_TXD_PTR, [NRF52_DATA_RAM_BASE])
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_TXD_MAXCNT, [len(data_out)])
+        rxd_location = NRF52_DATA_RAM_BASE + NRF52_DATA_RAM_LEN//2
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_RXD_PTR, [rxd_location]) 
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_RXD_MAXCNT, [len(data_out)])
+
+        # Clear any pending END event by writing 0 to it
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_EVENTS_END, [0])
+
+        # Set CS low
+        self.gpio_cfg_full(cs, dir=GPIO_DIR_OUTPUT)
+        sleep(0.05)
+        self.gpio_write(cs, False)
+        sleep(0.05)
+
+        # Send the START event
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_TASKS_START, [1])
+
+        # Spin until we hit the END event
+        while(self.jlink.memory_read32(base + NRF52_SPIM_OFFSET_EVENTS_END, 1)[0] == 0):
+            sleep(0.05)
+
+        # Clear CS to indicate completion
+        self.gpio_write(cs, True)
+
+        sent = self.jlink.memory_read32(base + NRF52_SPIM_OFFSET_TXD_AMOUNT, 1)[0]
+        received = self.jlink.memory_read32(base + NRF52_SPIM_OFFSET_RXD_AMOUNT, 1)[0]
+
+        print(f"Sent {sent} bytes, received {received} bytes")
+
+        if discard_incoming:
+            return
+
+        # Copy the incoming data out of RAM
+        return self.jlink.memory_read8(rxd_location, len(data_out))
+
+
+
+    def write_firmware(fname):
+
+        if os.path.isfile(fname):
+            true_filename = fname
+        else:
+            true_filename = (os.path.sep).join(os.path.realpath(__file__).split(os.path.sep)[:-1]) + "/" + fname
+
+        assert (os.path.isfile(true_filename)), "Failed to find the firmware file."
+        
+        # Program the firmware, checking UICR and main executable were written correctly
+
+        # Flash and UICR erase
+        self.jlink.reset()
+        
+        # Use the NVMC to quickly erase everything
+        print("Erasing nRF52...")
+        assert(self.jlink.memory_write32(addr=0x4001e504, data=[0x00000002]) == 4) # enable writing/erasing (CONFIG=0x2 - erase enabled)
+        sleep(0.5)
+        assert(self.jlink.memory_write32(addr=0x4001e50c, data=[0x00000001]) == 4) # Erase Flash (ERASEALL = 0x1)- CPU is halted during this operation
+        sleep(0.5) # Erase-all time specified as max 295.3ms
+        assert(self.jlink.memory_write32(addr=0x4001e514, data=[0x00000001]) == 4) # Erase UICR (ERASEUICR = 0x1)
+        sleep(0.5)
+
+        print("Programming nRF52...")
+        self.jlink.flash_file(true_filename, addr=0) 
+        
+        # TODO: Read back verification
+        # TODO: Verify this works as expected with UICR (ie bootloader works)
+
+        # Exit programming mode - write protect flash again
+        assert(self.jlink.memory_write32(addr=0x4001e504, data=[0x00000000]) == 4) # disable writing/erasing (CONFIG=0x0 - read-only)
+        sleep(0.1) 
+
+
