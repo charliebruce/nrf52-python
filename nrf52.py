@@ -95,6 +95,15 @@ NRF52_SPIM_FREQUENCY_500K = 0x08000000
 NRF52_SPIM_FREQUENCY_250K = 0x04000000
 NRF52_SPIM_FREQUENCY_125K = 0x02000000
 
+#
+# NVMC
+#
+NRF52_NVMC_BASE = 0x4001E000
+
+NRF52_NVMC_REG_READY            = NRF52_NVMC_BASE + 0x400
+NRF52_NVMC_REG_CONFIG           = NRF52_NVMC_BASE + 0x504
+NRF52_NVMC_REG_ERASEALL         = NRF52_NVMC_BASE + 0x50C
+NRF52_NVMC_REG_ERASEUICR        = NRF52_NVMC_BASE + 0x514
 # 
 # RAM
 # 
@@ -300,11 +309,11 @@ class nrf52:
         
         # Use the NVMC to quickly erase everything
         print("Erasing nRF52...")
-        assert(self.jlink.memory_write32(addr=0x4001e504, data=[0x00000002]) == 4) # enable writing/erasing (CONFIG=0x2 - erase enabled)
+        assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_CONFIG, data=[0x00000002]) == 4) # enable writing/erasing (CONFIG=0x2 - erase enabled)
         sleep(0.5)
-        assert(self.jlink.memory_write32(addr=0x4001e50c, data=[0x00000001]) == 4) # Erase Flash (ERASEALL = 0x1)- CPU is halted during this operation
+        assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_ERASEALL, data=[0x00000001]) == 4) # Erase Flash (ERASEALL = 0x1)- CPU is halted during this operation
         sleep(0.5) # Erase-all time specified as max 295.3ms
-        assert(self.jlink.memory_write32(addr=0x4001e514, data=[0x00000001]) == 4) # Erase UICR (ERASEUICR = 0x1)
+        assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_ERASEUICR, data=[0x00000001]) == 4) # Erase UICR (ERASEUICR = 0x1)
         sleep(0.5)
 
         print("Programming nRF52...")
@@ -314,7 +323,7 @@ class nrf52:
         # TODO: Verify this works as expected with UICR (ie bootloader works)
 
         # Exit programming mode - write protect flash again
-        assert(self.jlink.memory_write32(addr=0x4001e504, data=[0x00000000]) == 4) # disable writing/erasing (CONFIG=0x0 - read-only)
+        assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_CONFIG, data=[0x00000000]) == 4) # disable writing/erasing (CONFIG=0x0 - read-only)
         sleep(0.1) 
 
 
