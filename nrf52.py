@@ -190,7 +190,7 @@ class nrf52:
 
 
 
-    def spim_init(self, clk, mosi, miso, rate=NRF52_SPIM_FREQUENCY_4M, spim=0, cpol=0, cpha=0):
+    def spim_init(self, clk, mosi, miso, rate=NRF52_SPIM_FREQUENCY_8M, spim=0, cpol=0, cpha=0):
 
         if spim != 0:
             raise ValueError("Only tested with SPIM0")
@@ -226,7 +226,7 @@ class nrf52:
         self.gpio_cfg_full(mosi, dir=GPIO_DIR_OUTPUT, drive=GPIO_DRIVE_H0H1)
 
         # MISO is an input (TODO: do we need the buffer to be connected or not?)
-        self.gpio_cfg_full(miso, dir=GPIO_DIR_INPUT, input_buffer=GPIO_BUFFER_DISCONNECT)
+        self.gpio_cfg_full(miso, dir=GPIO_DIR_INPUT, input_buffer=GPIO_BUFFER_CONNECT)
 
         # Set up the pins.
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_SCK, [clk])
@@ -241,7 +241,7 @@ class nrf52:
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_ENABLE, [0x00000007]) # Enable SPIM 
 
 
-    def spim_send(self, cs, data_out, spim=0, discard_incoming=False):
+    def spim_transfer(self, cs, data_out, data_in_len, spim=0, discard_incoming=False):
 
         assert spim==0, "Bad SPIM"
         assert len(data_out) < 255, "Bad length"
@@ -249,7 +249,13 @@ class nrf52:
         # Check that the data length and specified CS pin are OK
         assert isinstance(cs, int) and (cs <= 31) and (cs >= 0), "Bad CS pin (NC/Port 1 not allowed at the moment)"
 
+        if len(data_out) == 1 and data_in_len == 1:
+            print(f"nRF52 has an anomaly, these lengths (TX: {len(data_out)} and RX: {data_in_len}) will result in an extra byte being transmitted.")
+            assert False,"Anomaly"
+
         base = NRF52_SPIM0_BASE
+
+        transfer_len = max(len(data_out), data_in_len)
 
         # Copy the outgoing data over into suitable RAM block
         self.jlink.memory_write8(NRF52_DATA_RAM_BASE, data_out)
@@ -259,37 +265,46 @@ class nrf52:
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_TXD_MAXCNT, [len(data_out)])
         rxd_location = NRF52_DATA_RAM_BASE + NRF52_DATA_RAM_LEN//2
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_RXD_PTR, [rxd_location]) 
-        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_RXD_MAXCNT, [len(data_out)])
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_RXD_MAXCNT, [data_in_len])
 
         # Clear any pending END event by writing 0 to it
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_EVENTS_END, [0])
 
         # Set CS low
-        self.gpio_cfg_full(cs, dir=GPIO_DIR_OUTPUT)
-        sleep(0.05)
         self.gpio_write(cs, False)
-        sleep(0.05)
+        sleep(0.005)
 
-        # Send the START event
+        # Send the START task
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_TASKS_START, [1])
 
         # Spin until we hit the END event
         while(self.jlink.memory_read32(base + NRF52_SPIM_OFFSET_EVENTS_END, 1)[0] == 0):
-            sleep(0.05)
+            sleep(0.005)
+
+        # Clear the END event
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_EVENTS_END, [0])
 
         # Clear CS to indicate completion
         self.gpio_write(cs, True)
 
+        # Read TX/RX nums
         sent = self.jlink.memory_read32(base + NRF52_SPIM_OFFSET_TXD_AMOUNT, 1)[0]
         received = self.jlink.memory_read32(base + NRF52_SPIM_OFFSET_RXD_AMOUNT, 1)[0]
 
-        print(f"Sent {sent} bytes, received {received} bytes")
-
         if discard_incoming:
+            # print(f"Sent {sent} bytes, discarded incoming")
             return
 
         # Copy the incoming data out of RAM
-        return self.jlink.memory_read8(rxd_location, len(data_out))
+        data_in = self.jlink.memory_read8(rxd_location, data_in_len)
+        # print(f"Sent {sent} bytes, received {received} bytes ({data_in})")
+
+        # Wipe the RAM (TODO: WTF - why is this needed?!) then return the data
+        # We do this because otherwise it seems we just read the same value as 
+        # the previous transaction - some kind of caching / DMA flush issue?
+        self.jlink.memory_write32(rxd_location, [0xFF] * transfer_len)
+        self.jlink.memory_write32(NRF52_DATA_RAM_BASE, [0xFF] * transfer_len)
+        return data_in
 
 
 
