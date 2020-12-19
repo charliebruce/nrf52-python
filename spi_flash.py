@@ -147,10 +147,13 @@ class spi_flash:
 
         start_addr = sector_num * SPI_FLASH_SECTOR_SIZE_BYTES
 
-        #For simplicity, we do 128-byte page writes (nRF52 transfer length is limited)
-        for i in range(0, SPI_FLASH_SECTOR_SIZE_BYTES, 128):
+        # Split data into the largest chunks the SPIM can take
+        for i in range(0, SPI_FLASH_SECTOR_SIZE_BYTES, 250)[:-1]:
 
-            self.spi_flash_write_page(start_addr + i, data[i:i+128])
+            self.spi_flash_write_page(start_addr + i, data[i:i+250])
+
+        # 4000 bytes written, now write the remaining 96 in the page
+        self.spi_flash_write_page(start_addr + 4000, data[4000:])
 
         # print("Writing complete")
 
@@ -159,7 +162,7 @@ class spi_flash:
     #If this represents a significant performance issue, we can work around, but this is simpler to understand.
     def spi_flash_write_page(self, address, data):
 
-        assert len(data)==128,"Data length unexpected"
+        assert len(data)<=250,"Data length unexpected"
 
         #Note that the page must have been erased previously (0xFF) otherwise the write will be invalid (bits can only be lowered by writing)
 

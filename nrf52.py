@@ -249,9 +249,9 @@ class nrf52:
         # Check that the data length and specified CS pin are OK
         assert isinstance(cs, int) and (cs <= 31) and (cs >= 0), "Bad CS pin (NC/Port 1 not allowed at the moment)"
 
-        if len(data_out) == 1 and data_in_len == 1:
-            print(f"nRF52 has an anomaly, these lengths (TX: {len(data_out)} and RX: {data_in_len}) will result in an extra byte being transmitted.")
-            assert False,"Anomaly"
+        if len(data_out) <= 1 and data_in_len == 1:
+            print(f"nRF52 has an anomaly, these lengths (TX: {len(data_out)} and RX: {data_in_len}) will result in an extra byte being clocked out.")
+            assert False,"Anomaly 58 would be triggered"
 
         base = NRF52_SPIM0_BASE
 
