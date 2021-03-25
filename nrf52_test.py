@@ -24,6 +24,9 @@ sleep(3)
 
 nrf = nrf52.nrf52(jlink)
 
+print(f"Connected to {nrf.read_mac()}")
+print(f"IC details: {nrf.read_details()}")
+
 # CLK, MOSI, MISO
 nrf.spim_init(20, 19, 21)
 

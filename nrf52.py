@@ -104,11 +104,26 @@ NRF52_NVMC_REG_READY            = NRF52_NVMC_BASE + 0x400
 NRF52_NVMC_REG_CONFIG           = NRF52_NVMC_BASE + 0x504
 NRF52_NVMC_REG_ERASEALL         = NRF52_NVMC_BASE + 0x50C
 NRF52_NVMC_REG_ERASEUICR        = NRF52_NVMC_BASE + 0x514
+
 # 
 # RAM
 # 
 NRF52_DATA_RAM_BASE = 0x20000000
 NRF52_DATA_RAM_LEN = 0x00010000 # This is 64kB - xxAA only.
+
+#
+# FICR
+#
+NRF52_FICR_BASE = 0x10000000
+NRF52_FICR_REG_DEVICEADDR0      = NRF52_FICR_BASE + 0x0A4
+NRF52_FICR_REG_DEVICEADDR1      = NRF52_FICR_BASE + 0x0A8
+
+NRF52_FICR_REG_INFO_PART        = NRF52_FICR_BASE + 0x100
+NRF52_FICR_REG_INFO_VARIANT     = NRF52_FICR_BASE + 0x104
+NRF52_FICR_REG_INFO_PACKAGE     = NRF52_FICR_BASE + 0x108
+NRF52_FICR_REG_INFO_RAM         = NRF52_FICR_BASE + 0x10C
+NRF52_FICR_REG_INFO_FLASH       = NRF52_FICR_BASE + 0x110
+
 
 class nrf52:
 
@@ -340,5 +355,53 @@ class nrf52:
         # Exit programming mode - write protect flash again
         assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_CONFIG, data=[0x00000000]) == 4) # disable writing/erasing (CONFIG=0x0 - read-only)
         sleep(0.1) 
+
+    def read_mac():
+
+        # MAC address spans two words.
+        deviceaddr = self.jlink.memory_read32(NRF52_FICR_REG_DEVICEADDR0, 2)
+
+        # Convert from 2x 32-bit words to 6x bytes
+        addr_bytes = [
+            ((0xFF & (deviceaddr[1] >> 8)) | 0b11000000), # two bits of the MAC are set to indicate that it is a Random Static Address
+            (0xFF & (deviceaddr[1])),
+            (0xFF & (deviceaddr[0] >> 24)),
+            (0xFF & (deviceaddr[0] >> 16)),
+            (0xFF & (deviceaddr[0] >> 8)),
+            (0xFF & (deviceaddr[0])) 
+        ]
+
+        # Return string representation of the MAC address
+        return ":".join([hex(x).upper().split("X")[1] for x in addr_bytes])
+
+
+    def read_details():
+        
+        # Info.Part = 52832, encoded as integer
+        info_part = str(self.jlink.memory_read32(NRF52_FICR_REG_INFO_PART, 1)[0])
+
+        # Info.Variant = 4-byte ASCII-encoded string with no \0, representing the part ("AAB0" for example)
+        info_variant_data = self.jlink.memory_read32(NRF52_FICR_REG_INFO_VARIANT, 1)[0]
+        s = ""
+        for i in range(4):
+            s = s + chr((info_variant_data >> 8*i) & 0xFF)
+        info_variant = s[::-1]
+
+        # Info.Package
+        package_codes = {
+        0x2000: "QF",       # QFN
+        0x2001: "CH",       # 7x8 WLCSP
+        0x2002: "CI",       # 7x8 WLCSP
+        0x2005: "CK"        # 7x8 WLCSP, backside coating for light protection
+        }
+        info_package = package_codes[self.jlink.memory_read32(NRF52_FICR_REG_INFO_PACKAGE, 1)[0]]
+
+        # Info.Ram = one of 0x10 (16 kByte RAM), 0x20 (32 kByte RAM), 0x40 (64 kByte RAM)
+        ram = self.jlink.memory_read32(NRF52_FICR_REG_INFO_RAM, 1)[0]
+
+        # Info.Flash = one of 0x80 (128 kByte FLASH), 0x100 (256 kByte FLASH), 0x200 (512 kByte FLASH)
+        flash = self.jlink.memory_read32(NRF52_FICR_REG_INFO_FLASH, 1)[0]
+
+        return f"nRF{info_part}-{info_package}{info_variant} ({ram}kB RAM, {flash}kB FLASH)"
 
 
