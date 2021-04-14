@@ -149,7 +149,7 @@ class nrf52:
         assert isinstance(pin, int), "Invalid type for pin - need int"
         assert pin < 32, "Need fixes before this code can handle GPIO P1"
         assert pin >= 0, "Invalid pin"        
-        assert self.nfcpins_are_gpios() or (pin not in [9, 10]), "Pin is set up for NFC, cannot be used for GPIO"
+        assert (pin not in [9, 10]) or self.nfcpins_are_gpios(), "Pin is set up for NFC, cannot be used for GPIO"
         
         # The PINCNF register handles everything. No need to write DIR, it's the same physical egister.
         cnf = (dir) + (input_buffer << 1) + (pull << 2) + (drive << 8) + (sense << 16)
@@ -162,7 +162,7 @@ class nrf52:
         assert isinstance(pin, int), "Invalid type for pin - need int"
         assert pin < 32, "Need fixes before this code can handle GPIO P1"
         assert pin >= 0, "Invalid pin"
-        assert self.nfcpins_are_gpios() or (pin not in [9, 10]), "Pin is set up for NFC, cannot be used for GPIO"
+        assert (pin not in [9, 10]) or self.nfcpins_are_gpios(), "Pin is set up for NFC, cannot be used for GPIO"
 
 
         if state:
