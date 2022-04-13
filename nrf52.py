@@ -845,7 +845,7 @@ class nrf52:
         ]
 
         # Return string representation of the MAC address
-        return ":".join([hex(x).upper().split("X")[1].zfill(2) for x in addr_bytes])
+        return ":".join(["%02X" % x for x in addr_bytes])
 
 
     def read_details(self):
