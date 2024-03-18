@@ -1,11 +1,13 @@
-# Allow control of an nRF52-series IC by directly modifying peripheral registers
+
+
+# Allow control of an nRF52-series IC by directly messing with registers
 # This allows a SWD debugger to quickly prove board functionality
 # This is just a small subset of the complete functionality
 # It is designed to allow basic self-test and bringup functions only
-# Initially developed for and tested on the nRF52832, has been extended to mostly support the nRF52840.
-# Some of the logic may still need to be fixed to support GPIO port 1 / other features only present on newer ICs.
-
+# Initially developed for and tested on the nRF52832.
+# Should be applicable to others in the family, but may need to fix, for example, GPIO port 1
 from time import sleep
+from pylink import JLink
 import os
 
 #
@@ -162,7 +164,7 @@ NRF52_SAADC_REG_EVENTS_STOPPED          = NRF52_SAADC_BASE + 0x114
 
 def NRF52_SAADC_REG_EVENTS_CH_LIMIT(channel, high_or_low):
     assert channel in range(NRF52_SAADC_NUM_CHANNELS), "Invalid ADC channel"
-    assert high_or_low.lower() in ["h", "l", "high", "low"], "High or low must be one of 'h', 'l', 'high' or 'low'"
+    assert high_or_low.lower() in ["h", "l", "high", "low"], "High or low must be one of 'h', 'l', 'high' or 'low'" 
 
     is_high = True if high_or_low.lower() in ["h", "high"] else False
 
@@ -208,7 +210,7 @@ saadc_res = {
 saadc_gain = {
     "gain1_6": 0,
     "gain1_5": 1,
-    "gain1_4": 2,
+    "gain1_4": 2, 
     "gain1_3": 3,
     "gain1_2": 4,
     "gain1": 5,
@@ -306,10 +308,19 @@ NRF52_UICR_REG_NFCPINS          = NRF52_UICR_BASE + 0x20C
 NRF52_UICR_REG_DEBUGCTRL        = NRF52_UICR_BASE + 0x210
 NRF52_UICR_REG_REGOUT0          = NRF52_UICR_BASE + 0x304
 
+NRF52_UICR_REG_MAX = NRF52_UICR_REG_REGOUT0 
+
+#
+# POWER
+#
+NRF52_POWER_BASE = 0x40000000
+
+NRF52_POWER_REG_USBREGSTATUS    = NRF52_POWER_BASE + 0x438
+
 
 class nrf52:
 
-    def __init__(self, jlink):
+    def __init__(self, jlink: JLink):
 
         self.jlink = jlink
 
@@ -317,7 +328,7 @@ class nrf52:
     def gpio_cfg_full(self, pin, direction=GPIO_DIR_INPUT, input_buffer=GPIO_BUFFER_DISCONNECT, pull=GPIO_PULL_NONE, drive=GPIO_DRIVE_S0S1, sense=0):
         
         assert pin >= 0, "Invalid pin"
-        assert isinstance(pin, int), "Invalid type for pin - need int"
+        assert isinstance(pin, int), "Invalid type for pin - need int"   
         assert (pin not in [9, 10]) or self.nfcpins_are_gpios(), "Pin is set up for NFC, cannot be used for GPIO"
         
         port = pin // 32
@@ -354,6 +365,8 @@ class nrf52:
 
         port = pin // 32
         pin = pin % 32
+        
+        assert port in range(2), f"Bad port number {port}"
 
         if state:
             reg = NRF52_GPIO_BASE[port] + NRF52_GPIO_OFFSET_REG_OUTSET
@@ -445,7 +458,7 @@ class nrf52:
 
         assert channel_adc in range(NRF52_SAADC_NUM_CHANNELS), f"Invalid ADC channel: {channel_p}, must be less than {NRF52_SAADC_NUM_CHANNELS}"
 
-        # A channel is only considered enabled if PSELP is set, the rest of the configuration can be left.
+        # A channel is only considered enabled if PSELP is set, the rest of the configuration can be left.        
         pselp = NRF52_SAADC_REG_CH_CONFIG_BASE(channel_adc) + NRF52_SAADC_OFFSET_PSELP
         value = saadc_inputs["NC"]
         self.jlink.memory_write32(pselp, [value])
@@ -484,7 +497,7 @@ class nrf52:
         # One-shot conversion is configured by enabling only one of the available channels (by setting PSELP value on one channel only)
         # Upon a SAMPLE task, the ADC starts to sample the input voltage. The CH[n].CONFIG.TACQ controls the acquisition time.
         # A DONE event signals that one sample has been taken.
-        # In this mode, the RESULTDONE event has the same meaning as DONE when no oversampling takes place.
+        # In this mode, the RESULTDONE event has the same meaning as DONE when no oversampling takes place. 
         # Note that both events may occur before the actual value has been transferred into RAM by EasyDMA. For more information, see EasyDMA.
 
         # TODO: Ensure we're only configured with one PSELP value set (ie we will perform a single conversion only)
@@ -495,7 +508,7 @@ class nrf52:
         
 
         # Enable the correct channel
-        # TODO: This
+        # TODO: This 
         # self.jlink.memory_write32(NRF52_SAA....)
 
         # Clear the event signals
@@ -545,25 +558,23 @@ class nrf52:
 
         return (self.jlink.memory_read32(NRF52_UICR_REG_NFCPINS, 1)[0] & 1) == 0
 
-    def spim_init(self, clk, mosi, miso, rate=NRF52_SPIM_FREQUENCY_8M, spim=0, cpol=0, cpha=0):
+    def spim_init(self, clk, mosi, miso, rate=NRF52_SPIM_FREQUENCY_8M, spim=0, cpol=0, cpha=0, msbFirst=True):
 
         if spim != 0:
             raise ValueError("Only tested with SPIM0")
-        if cpol != 0 or cpha != 0:
-            raise ValueError("Only tested with CPOL=CPHA=0")
-
-        if clk:
-            assert isinstance(clk, int) and (clk <= 31) and (clk >= 0), "Bad CLK pin (NC/Port 1 not allowed at the moment)"
+            
+        if clk != None:
+            assert isinstance(clk, int) and (clk >= 0), "Bad CLK pin"
         else:
             clk = 0xFFFFFFFF # Disconnected if high bit set
 
-        if mosi:
-            assert isinstance(mosi, int) and (mosi <= 31) and (mosi >= 0), "Bad MOSI pin (NC/Port 1 not allowed at the moment)"
+        if mosi != None:
+            assert isinstance(mosi, int) and (mosi >= 0), "Bad MOSI pin"
         else:
             mosi = 0xFFFFFFFF # Disconnected if high bit set
 
-        if miso:
-            assert isinstance(miso, int) and (miso <= 31) and (miso >= 0), "Bad MISO pin (NC/Port 1 not allowed at the moment)"
+        if miso != None:
+            assert isinstance(miso, int) and (miso >= 0), "Bad MISO pin"
         else:
             miso = 0xFFFFFFFF # Disconnected if high bit set
 
@@ -574,14 +585,14 @@ class nrf52:
         # CLK is an output, must have its output value set to match CPOL
         # According to nrfx_spim.c we also need the input buffer connected for correct functionality, but this doesn't seem to change anything (at least, not in TX-only mode?)
         self.gpio_write(clk, (False if cpol == 0 else True))
-        self.gpio_cfg_full(clk, dir=GPIO_DIR_OUTPUT, input_buffer=GPIO_BUFFER_CONNECT, drive=GPIO_DRIVE_H0H1)
+        self.gpio_cfg_full(clk, direction=GPIO_DIR_OUTPUT, input_buffer=GPIO_BUFFER_CONNECT, drive=GPIO_DRIVE_H0H1)
 
         # MOSI is an output, must default to 0
         self.gpio_write(mosi, False)
-        self.gpio_cfg_full(mosi, dir=GPIO_DIR_OUTPUT, drive=GPIO_DRIVE_H0H1)
+        self.gpio_cfg_full(mosi, direction=GPIO_DIR_OUTPUT, drive=GPIO_DRIVE_H0H1)
 
         # MISO is an input (TODO: do we need the buffer to be connected or not?)
-        self.gpio_cfg_full(miso, dir=GPIO_DIR_INPUT, input_buffer=GPIO_BUFFER_CONNECT)
+        self.gpio_cfg_full(miso, direction=GPIO_DIR_INPUT, input_buffer=GPIO_BUFFER_CONNECT)
 
         # Set up the pins.
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_SCK, [clk])
@@ -590,8 +601,9 @@ class nrf52:
 
         # Configure the peripheral
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_FREQUENCY, [rate])
-        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_CONFIG, [0x00000000]) # Bit 0: MSB first (0), Bit 1: CPHA Leading (0), Bit 2: CPOL Active High (0)
-
+        spim_config = ((0 if msbFirst else 1) << 0) | (cpha << 1) | (cpol << 2)
+        self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_CONFIG, [spim_config])
+        
         # Enable it
         self.jlink.memory_write32(base + NRF52_SPIM_OFFSET_ENABLE, [0x00000007]) # Enable SPIM 
 
@@ -646,7 +658,7 @@ class nrf52:
         
         # Enable the peripheral
         self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ENABLE, [6])
-        sleep(0.005)
+        sleep(0.005)   
             
         # Trigger STARTTX task
         self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_TASKS_STARTTX, [1])
@@ -682,7 +694,7 @@ class nrf52:
             print(f"TWI ERROR event fired. Flags: {flags}")
             
             # Disable the peripheral
-            self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ENABLE, [0])
+            self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ENABLE, [0]) 
 
             return None
         
@@ -703,6 +715,112 @@ class nrf52:
         self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ENABLE, [0])
         
         return data_in
+
+    def twim_write(self, scl, sda, addr, reg, data, freq=400, twim=0):
+        
+        assert twim==0, "Alternate TWIMs not yet supported"
+        assert freq==400, "Alternate TWI frequencies not yet supported"
+        assert addr <= 127 and addr >= 0, "Address out of range"
+        
+        base = NRF52_TWIM0_BASE
+        frequency = NRF52_TWIM_FREQUENCY_K400
+        
+        # Set up the PSEL.SCL, PSEL.SDA, FREQUENCY and the ADDRESS[n] register
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_PSEL_SCL, [scl])
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_PSEL_SDA, [sda])
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_FREQUENCY, [frequency])
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ADDRESS, [addr])
+        
+        # Address should be in the lowest 7 bits (the peripheral handles READ/WRITE for us)
+        
+        # Also configure S0D1 drive on both pins (only necessary for correct low-power performance?)
+        
+        # Also set Direction to Input (only necessary for correct low-power performance?)
+                
+        # We use the SHORTS system to connect tasks and events together.
+        # T
+        # Connect LASTTX event to STOP task (LASTTX_STOP - bit 9)
+        shorts = (1 << 9)
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_SHORTS, [shorts])
+
+        
+        # Set TX.MAXCNT, RX.MAXCNT=0
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_TXD_MAXCNT, [1 + len(data)])
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_RXD_MAXCNT, [0])
+        
+        # Set TX from DMA-capable RAM, RX to a separate block of DMA-capable RAM (irrelevant)
+        txd_location = NRF52_DATA_RAM_BASE
+        rxd_location = NRF52_DATA_RAM_BASE + NRF52_DATA_RAM_LEN//2
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_TXD_PTR, [txd_location])
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_RXD_PTR, [rxd_location])
+        
+        # Write the TX data to RAM, to be transmitted
+        tx_data = [reg]
+        tx_data.extend(data)
+        self.jlink.memory_write8(txd_location, tx_data)
+        
+        # Clear out any old events
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_EVENTS_STOPPED, [0])
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_EVENTS_ERROR, [0])
+        
+        # Enable the peripheral
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ENABLE, [6])
+        sleep(0.005)   
+            
+        # Trigger STARTTX task
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_TASKS_STARTTX, [1])
+        
+        # Poll for STOPPED and ERROR events
+        stopped = 0
+        err = 0
+        while(err == 0 and stopped == 0):
+            stopped = self.jlink.memory_read32(base + NRF52_TWIM_OFFSET_EVENTS_STOPPED, 1)[0]
+            err = self.jlink.memory_read32(base + NRF52_TWIM_OFFSET_EVENTS_ERROR, 1)[0]
+            sleep(0.005)
+            
+        # Ensure they're consistent (if the fault occurred betwen the first and second read, we might miss the err being set)
+        stopped = self.jlink.memory_read32(base + NRF52_TWIM_OFFSET_EVENTS_STOPPED, 1)[0]
+        err = self.jlink.memory_read32(base + NRF52_TWIM_OFFSET_EVENTS_ERROR, 1)[0]
+        
+        # Clear the events
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_EVENTS_STOPPED, [0])
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_EVENTS_ERROR, [0])
+        
+        # If an ERROR occurred, find the type of error, print diagnostic, and return None
+        if(err != 0):
+            errsrc = self.jlink.memory_read32(base + NRF52_TWIM_OFFSET_ERRORSRC, 1)[0]
+            self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ERRORSRC, [0])
+            flags = ""
+            if(errsrc & 0b1):
+                flags += "OVERRUN "
+            if(errsrc & 0b10):
+                flags += "ANACK "
+            if(errsrc & 0b100):
+                flags += "DNACK "
+                
+            print(f"TWI ERROR event fired. Flags: {flags}")
+            
+            # Disable the peripheral
+            self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ENABLE, [0]) 
+
+            return None
+        
+        # If the TXD_AMOUNT or RXD_AMOUNT does not match the expected length, something went wrong?
+        # TODO: Handle errors
+        sent = self.jlink.memory_read32(base + NRF52_TWIM_OFFSET_TXD_AMOUNT, 1)[0]
+        received = self.jlink.memory_read32(base + NRF52_TWIM_OFFSET_RXD_AMOUNT, 1)[0]
+        
+        assert sent == 1 + len(data), f"Failed I2C TX, wrong length {sent}"
+        #print(f"TWI completed - sent {sent}, received {received}")
+        
+        # Clear the data (needed for some reason? Copied from SPI)
+        self.jlink.memory_write32(rxd_location, [0xFF] * 256)
+        self.jlink.memory_write32(txd_location, [0xFF] * 256)
+        
+        # Disable the peripheral
+        self.jlink.memory_write32(base + NRF52_TWIM_OFFSET_ENABLE, [0])
+        
+        return True
         
         
 
@@ -712,7 +830,7 @@ class nrf52:
         assert len(data_out) < 255, "Bad length"
 
         # Check that the data length and specified CS pin are OK
-        assert isinstance(cs, int) and (cs <= 31) and (cs >= 0), "Bad CS pin (NC/Port 1 not allowed at the moment)"
+        assert isinstance(cs, int) and (cs >= 0), "Bad CS pin"
 
         if len(data_out) <= 1 and data_in_len == 1:
             print(f"nRF52 has an anomaly, these lengths (TX: {len(data_out)} and RX: {data_in_len}) will result in an extra byte being clocked out.")
@@ -795,7 +913,7 @@ class nrf52:
         else:
             true_filename = (os.path.sep).join(os.path.realpath(__file__).split(os.path.sep)[:-1]) + "/" + fname
 
-        assert (os.path.isfile(true_filename)), "Failed to find the firmware file."
+        assert (os.path.isfile(true_filename)), f"Failed to find the firmware file at {true_filename}."
         
         # Program the firmware, checking UICR and main executable were written correctly
 
@@ -878,4 +996,126 @@ class nrf52:
 
         return f"nRF{info_part}-{info_package}{info_variant} ({ram}kB RAM, {flash}kB FLASH)"
 
+    def usb_vbus_present(self):
+            
+        # Read NRF_POWER->USBREGSTATUS
+        usbregstatus = self.jlink.memory_read32(NRF52_POWER_REG_USBREGSTATUS, 1)[0]
+        
+        # Check the VBUSDETECT bit
+        return (usbregstatus & 1) == 1     
+    
+    def __calc_uicr_size_bytes(self):
+        return NRF52_UICR_REG_MAX - NRF52_UICR_BASE + 4
+
+    def read_uicr(self):
+        uicr_size = self.__calc_uicr_size_bytes()
+
+        return self.jlink.memory_read32(NRF52_UICR_BASE, uicr_size//4) 
+    
+    def rewrite_uicr_and_reset(self, uicr_data, halt=True):
+
+        assert isinstance(uicr_data, list) and len(uicr_data) <= self.__calc_uicr_size_bytes()//4, "Invalid UICR data"
+
+        for value in uicr_data:
+            assert isinstance(value, int) and (value >= 0) and (value < 2**32), "Invalid UICR data"
+        
+
+        assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_CONFIG, data=[0x00000002]) == 4) # enable writing/erasing (CONFIG=0x2 - erase enabled)
+        sleep(0.1)
+        assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_ERASEUICR, data=[0x00000001]) == 4) # Erase UICR (ERASEUICR = 0x1)
+        sleep(0.3) # Erase-all time specified as max 295.3ms
+
+        def turn_data_into_runs(data):
+            """Converts a list of 32-bit words into a list of (start_offset, [data]) tuples, where the data is not 0xFFFFFFFF."""
+            runs = []
+            start_offset = None
+            bunched_data = []
+
+            for offset, value in enumerate(data):
+                if value != 0xFFFFFFFF:
+                    if start_offset is None:
+                        start_offset = offset
+                    bunched_data.append(value)
+                elif start_offset is not None:
+                    runs.append((start_offset, bunched_data))
+                    start_offset = None
+                    bunched_data = []
+
+            if start_offset is not None:
+                runs.append((start_offset, bunched_data))
+            
+            return runs
+        
+        runs = turn_data_into_runs(uicr_data)
+
+        for start_offset, bunched_data in runs:
+            self.jlink.memory_write32(NRF52_UICR_BASE + 4 * start_offset, bunched_data)
+            sleep(0.01)
+            assert self.jlink.memory_read32(NRF52_NVMC_REG_READY, 1)[0] == 1, "NVMC still indicating busy after writing UICR"
+
+        assert(self.jlink.memory_write32(addr=NRF52_NVMC_REG_CONFIG, data=[0x00000000]) == 4) # disable writing/erasing (CONFIG=0x0 - read-only)
+
+        self.jlink.reset(halt=halt)
+
+
+    def read_uicr_customer(self):
+
+        # UICR contains 32 words free for customer use
+        return self.jlink.memory_read32(NRF52_UICR_REG_CUSTOMER, 32)
+    
+    def erase_uicr_customer(self):
+        uicr = self.read_uicr()
+        customer_offset = (NRF52_UICR_REG_CUSTOMER - NRF52_UICR_BASE ) // 4
+        customer_length = 32
+
+        # If the customer area is already blank, don't bother
+        if uicr[customer_offset:customer_offset+customer_length] == [0xFFFFFFFF] * customer_length:
+            return
+        
+        uicr[customer_offset:customer_offset+customer_length] = [0xFFFFFFFF] * customer_length
+
+        self.rewrite_uicr_and_reset(uicr, halt=True)
+        
+
+
+
+    def write_uicr_customer(self, cust_reg, data, erase_if_needed=False):
+            
+            assert isinstance(data, list) and len(data) > 0 and cust_reg + len(data) <= 32, "Invalid data"
+            assert isinstance(cust_reg, int) and (cust_reg >= 0) and (cust_reg < 31 - len(data)), "Invalid start register"
+
+            for d in data:
+                assert isinstance(d, int) and (d >= 0) and (d < 2**32), "Invalid data"
+    
+            current_data = self.read_uicr_customer()
+            
+            #if what we want to write is already there, don't bother
+            if current_data[cust_reg:cust_reg+len(data)] == data:
+                return
+
+            customer_uicr_was_erased = False 
+            for i in range(len(data)):
+                if current_data[cust_reg + i] != 0xFFFFFFFF:
+                    if erase_if_needed:
+                        print("Erasing UICR customer area before writing")
+                        self.erase_uicr_customer()
+                        customer_uicr_was_erased = True
+                    else:
+                        assert False, "UICR customer area not blank, and erase_if_needed not set"
+
+            self.jlink.memory_write32(NRF52_NVMC_REG_CONFIG, [0x00000001]) # WEN = 0x01 (Writes enabled)
+
+            # if we erased the customer area, we need to write the whole thing again
+            if customer_uicr_was_erased:
+                current_data [ cust_reg : cust_reg + len(data) ] = data
+                self.jlink.memory_write32(NRF52_UICR_REG_CUSTOMER, current_data)
+            
+            else:
+                self.jlink.memory_write32(NRF52_UICR_REG_CUSTOMER + 4 * cust_reg, data)
+
+            sleep(0.1)
+
+            assert(self.jlink.memory_read32(NRF52_NVMC_REG_READY, 1)[0] == 1), "NVMC still indicating busy after writing UICR"
+
+            self.jlink.memory_write32(NRF52_NVMC_REG_CONFIG, [0x00000000]) # WEN = 0x00 (Writes and erasing disabled)
 
